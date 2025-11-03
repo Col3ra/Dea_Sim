@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Simulador DEA - MVP</title>
+<style>
+  :root{
+    --bg:#0b0f14; --panel:#111722; --accent:#2dd4bf; --accent2:#60a5fa; --warn:#ef4444; --ok:#22c55e; --muted:#94a3b8; --text:#e5e7eb;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:linear-gradient(180deg,#0b0f14,#0a0d12);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial}
+  .app{display:grid;grid-template-columns:340px 1fr;gap:16px;min-height:100dvh;padding:16px}
+  .panel{background:var(--panel);border:1px solid #1e293b;border-radius:12px;padding:12px}
+  .title{font-weight:700;font-size:18px;margin-bottom:8px}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .btn{
+    padding:10px 14px;border-radius:10px;border:1px solid #1f2937;background:#0f172a;color:var(--text);
+    cursor:pointer;font-weight:600;transition:transform .02s ease,opacity .2s ease,background .2s ease;
+    user-select:none
+  }
+  .btn:active{transform:scale(0.98)}
+  .btn[disabled]{opacity:.45;cursor:not-allowed}
+  .btn.on{background:linear-gradient(180deg,#0f1c3a,#0a1328);border-color:#253b6e}
+  .btn.accent{background:linear-gradient(180deg,#0d2723,#061f1b);border-color:#164e3b;color:#8ef3e3}
+  .btn.warn{background:linear-gradient(180deg,#3a0f12,#2a0a0c);border-color:#6e2528;color:#fecaca}
+  .btn.ok{background:linear-gradient(180deg,#0d2a12,#0a1e0c);border-color:#1f6e25;color:#bcf7c2}
+  .badge{display:inline-block;padding:4px 8px;border-radius:999px;font-size:12px;background:#0b1220;border:1px solid #1f2a44;color:#cbd5e1}
+  .lcd{
+    background:radial-gradient(ellipse at 50% 0%,#0c182a 0%,#0a1220 55%,#08101b 100%);
+    border:1px solid #263246;border-radius:12px;padding:8px;min-height:140px;position:relative;overflow:hidden
+  }
+  .lcd .msg{font-variant-numeric:tabular-nums;font-size:15px;line-height:1.4}
+  .lcd .status{position:absolute;right:8px;bottom:8px;font-size:12px;color:var(--muted)}
+  .lcd .big{font-size:18px;font-weight:700}
+  .lcd .energy{font-weight:700;color:#fde68a}
+  .lcd .count{font-weight:800;color:#93c5fd}
+  .lcd .danger{color:#fecaca}
+  .lcd .safe{color:#bbf7d0}
+  .lcd canvas{position:absolute;left:0;bottom:0;height:60px;width:100%;opacity:.9}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .torsoWrap{position:relative;background:#0b1018;border:1px solid #1f2a44;border-radius:12px;padding:8px;min-height:420px}
+  .torso{width:100%;height:100%}
+  .zone{position:absolute;border:2px dashed #334155;border-radius:50%;width:120px;height:120px;opacity:.6}
+  .zone.good{border-color:#22c55e}
+  .zone.bad{border-color:#ef4444}
+  .zoneLabel{position:absolute;font-size:12px;color:#94a3b8;top:-18px;left:0}
+  .pad{position:absolute;width:110px;height:110px;border-radius:12px;background:linear-gradient(180deg,#eceff3,#d9dfe6);
+    border:2px solid #94a3b8;box-shadow:0 6px 18px rgba(0,0,0,.35);cursor:grab;touch-action:none;display:flex;align-items:center;justify-content:center;color:#0b1220;font-weight:800}
+  .pad:active{cursor:grabbing}
+  .pad.sternal::after,.pad.apical::after{content:'';position:absolute;inset:0;border-radius:10px;border:2px dashed rgba(0,0,0,.08);pointer-events:none}
+  .pad.placed{border-color:#22c55e}
+  .hint{font-size:12px;color:#94a3b8}
+  .timeline{height:140px;overflow:auto;background:#0b1016;border:1px solid #1e293b;border-radius:10px;padding:8px}
+  .logline{font-size:12px;color:#cbd5e1;border-left:3px solid #1f2a44;padding-left:6px;margin:4px 0}
+  .cprBar{height:14px;background:#0b1522;border:1px solid #23324a;border-radius:999px;overflow:hidden}
+  .cprFill{height:100%;width:0%;background:linear-gradient(90deg,var(--accent),var(--accent2))}
+  .metronome{font-variant-numeric:tabular-nums;font-weight:800}
+  .pill{padding:4px 6px;border:1px solid #263246;border-radius:6px;background:#0b1220;color:#cbd5e1}
+  .hr{height:1px;background:#1e293b;margin:8px 0}
+  @media(max-width:980px){.app{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- PANEL IZQUIERDO (DEA) -->
+  <div class="panel">
+    <div class="title">DEA — Panel de control</div>
+
+    <div class="lcd" id="lcd">
+      <div class="msg" id="lcdMsg">
+        <div><span class="badge">Estado</span> <b id="stateLabel">Apagado</b></div>
+        <div class="hr"></div>
+        <div class="big">Encienda el DEA</div>
+        <div class="hint">Use el botón <b>POWER</b>. Audio guía: <span id="ttsFlag">OFF</span></div>
+      </div>
+      <canvas id="wave"></canvas>
+      <div class="status">
+        Energía: <span class="energy" id="energyLabel">—</span> · Ritmo: <span id="rhythmLabel">—</span>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:8px">
+      <button class="btn on" id="btnPower">POWER</button>
+      <button class="btn" id="btnAnalyze" disabled>ANALIZAR</button>
+      <button class="btn warn" id="btnNobody" disabled>¡NADIE TOQUE!</button>
+      <button class="btn accent" id="btnShock" disabled>SHOCK</button>
+      <button class="btn ok" id="btnCPR" disabled>INICIAR RCP 2:00</button>
+      <button class="btn" id="btnTTS">Audio TTS</button>
+    </div>
+
+    <div class="hr"></div>
+
+    <div class="grid">
+      <div>
+        <div class="badge">Caso</div>
+        <div style="margin-top:6px" class="row">
+          <select id="caseSel" class="pill">
+            <option value="fv_gruesa">FV gruesa presenciada (adulto)</option>
+          </select>
+          <span class="pill">Modo: <b>Libre</b></span>
+        </div>
+        <div class="hr"></div>
+        <div class="badge">RCP</div>
+        <div style="margin:6px 0 8px" class="cprBar"><div class="cprFill" id="cprFill"></div></div>
+        <div class="row">
+          <span>Tiempo: <b class="metronome" id="cprClock">02:00</b></span>
+          <span>Tempo: <b class="metronome" id="tempo">110</b> bpm</span>
+        </div>
+      </div>
+      <div>
+        <div class="badge">Indicadores</div>
+        <div style="margin-top:6px" class="row" id="indicators">
+          <span class="pill" id="indPads">Parches: —</span>
+          <span class="pill" id="indSafe">Seguridad: —</span>
+          <span class="pill" id="indCycles">Ciclo: 0</span>
+          <span class="pill" id="indScore">Score: 0</span>
+        </div>
+        <div class="hr"></div>
+        <div class="badge">Log</div>
+        <div class="timeline" id="log"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PANEL DERECHO (TORSO + PARCHES) -->
+  <div class="panel">
+    <div class="title">Colocación de parches</div>
+    <div class="torsoWrap" id="torsoWrap">
+      <!-- ZONAS OBJETIVO -->
+      <div class="zone" id="zoneSternal" style="left:28%; top:22%"></div>
+      <div class="zone" id="zoneApical"  style="right:10%; bottom:14%"></div>
+      <div class="zoneLabel" style="left:28%; top:22%">Sternal (subclavicular derecha)</div>
+      <div class="zoneLabel" style="right:10%; bottom:14%">Apical (lateral izquierda)</div>
+
+      <!-- SVG TORAX (simple silueta) -->
+      <svg class="torso" viewBox="0 0 800 520" aria-hidden="true">
+        <defs>
+          <linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#0f1826"/>
+            <stop offset="1" stop-color="#0a111d"/>
+          </linearGradient>
+        </defs>
+        <rect x="0" y="0" width="800" height="520" fill="url(#g1)"/>
+        <!-- contorno pecho -->
+        <path d="M140,80 C220,20 580,20 660,80 C740,140 760,280 730,420 C680,480 120,480 70,420 C40,280 60,140 140,80 Z"
+              fill="#0d1421" stroke="#1f2a44" stroke-width="3"/>
+        <!-- esternón -->
+        <rect x="380" y="150" width="40" height="160" rx="20" fill="#0b1220" stroke="#25314a"/>
+      </svg>
+
+      <!-- PARCHES DRAGGABLE -->
+      <div id="padSternal" class="pad sternal" style="left:30px; top:30px;">S</div>
+      <div id="padApical"  class="pad apical"  style="left:160px; top:30px;">A</div>
+    </div>
+
+    <div class="hint" style="margin-top:8px">
+      Arrastra los parches “S” (sternal) y “A” (apical) hacia las zonas punteadas. Se iluminan en verde al encastrar.
+    </div>
+  </div>
+</div>
+
+<script>
+/* =========================
+   SIMULADOR DEA – LÓGICA MVP
+   ========================= */
+(() => {
+  // ---- Helpers DOM
+  const $ = sel => document.querySelector(sel);
+  const logBox = $('#log');
+  const stateLabel = $('#stateLabel');
+  const energyLabel = $('#energyLabel');
+  const rhythmLabel = $('#rhythmLabel');
+  const lcdMsg = $('#lcdMsg');
+  const btnPower = $('#btnPower');
+  const btnAnalyze = $('#btnAnalyze');
+  const btnNobody = $('#btnNobody');
+  const btnShock = $('#btnShock');
+  const btnCPR = $('#btnCPR');
+  const btnTTS = $('#btnTTS');
+  const ttsFlag = $('#ttsFlag');
+  const indPads = $('#indPads');
+  const indSafe = $('#indSafe');
+  const indCycles = $('#indCycles');
+  const indScore = $('#indScore');
+  const cprFill = $('#cprFill');
+  const cprClock = $('#cprClock');
+  const tempoEl = $('#tempo');
+  const caseSel = $('#caseSel');
+  const zoneS = $('#zoneSternal'), zoneA = $('#zoneApical');
+  const padS = $('#padSternal'), padA = $('#padApical');
+  const torso = $('#torsoWrap');
+
+  // ---- Estado global
+  const State = {
+    OFF:'off', ON:'on', PADS:'pads',
+    ANALYZING:'analyzing', CHARGING:'charging', SHOCK_READY:'shock_ready',
+    CPR:'cpr', REANALYZE:'reanalyze', DONE:'done'
+  };
+  const Rhythm = { VF_COARSE:'FV gruesa', FLAT:'Asistolia', TV:'TV sin pulso', SINUS:'Sinusal', PEA:'PEA' };
+
+  let sim = {
+    state: State.OFF,
+    rhythm: Rhythm.VF_COARSE,
+    cycle: 0,
+    energy: 0,
+    safeConfirmed: false,
+    padsPlaced: {S:false, A:false},
+    score: 0,
+    t0: performance.now(),
+    tts: false,
+    logs: [],
+    timers: {analyze:null, charge:null, cpr:null, metro:null, draw:null}
+  };
+
+  // ---- LOG
+  function log(ev, data={}) {
+    const t = new Date();
+    sim.logs.push({t:t.toISOString(), ev, ...data});
+    const line = document.createElement('div');
+    line.className='logline';
+    line.textContent = `[${t.toLocaleTimeString()}] ${ev}` + (Object.keys(data).length? ` ${JSON.stringify(data)}`:'');
+    logBox.prepend(line);
+  }
+
+  // ---- TTS (opcional)
+  function speak(text){
+    if(!sim.tts || !('speechSynthesis' in window)) return;
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang='es-AR'; u.rate=1; u.pitch=1;
+    speechSynthesis.cancel(); // evitar colas
+    speechSynthesis.speak(u);
+  }
+
+  // ---- UI helpers
+  function setLCD(html){
+    lcdMsg.innerHTML = html;
+  }
+  function setState(s){
+    sim.state = s;
+    stateLabel.textContent = ({
+      off:'Apagado', on:'Encendido', pads:'Colocar parches', analyzing:'Analizando',
+      charging:'Cargando', shock_ready:'Shock listo', cpr:'RCP', reanalyze:'Re-analizar', done:'Completado'
+    })[s] || s;
+  }
+  function updateIndicators(){
+    indPads.textContent = `Parches: ${sim.padsPlaced.S && sim.padsPlaced.A ? 'OK' : 'Incompletos'}`;
+    indSafe.textContent = `Seguridad: ${sim.safeConfirmed ? 'OK' : 'Pendiente'}`;
+    indCycles.textContent = `Ciclo: ${sim.cycle}`;
+    indScore.textContent = `Score: ${sim.score}`;
+    energyLabel.textContent = sim.energy? `${sim.energy} J` : '—';
+    rhythmLabel.textContent = sim.rhythm;
+    // Zonas estilo
+    [zoneS,zoneA].forEach(z=>z.classList.remove('good','bad'));
+    if(sim.state===State.PADS){
+      zoneS.classList.toggle('good',sim.padsPlaced.S);
+      zoneA.classList.toggle('good',sim.padsPlaced.A);
+    }
+  }
+
+  // ---- Máquina de estados (flujo MVP: FV→Shock→RCP→reanalizar→posible RCE)
+  function powerToggle(){
+    if(sim.state===State.OFF){
+      setState(State.ON);
+      btnAnalyze.disabled = true; btnShock.disabled = true; btnCPR.disabled = true; btnNobody.disabled = true;
+      setLCD(`<div class="big">Coloque los parches</div><div class="hint">Arrastre S y A a las zonas indicadas.</div>`);
+      speak('Encienda el DEA. Coloque los parches como se indica.');
+      setState(State.PADS);
+      updateIndicators();
+      log('POWER ON');
+    } else {
+      // reset total
+      stopAllTimers();
+      sim = {...sim, state:State.OFF, rhythm:Rhythm.VF_COARSE, cycle:0, energy:0, safeConfirmed:false, padsPlaced:{S:false,A:false}, score:0};
+      // reset UI
+      padS.style.left='30px'; padS.style.top='30px'; padS.classList.remove('placed');
+      padA.style.left='160px'; padA.style.top='30px'; padA.classList.remove('placed');
+      setLCD(`<div><span class="badge">Estado</span> <b>Apagado</b></div><div class="hr"></div><div class="big">Encienda el DEA</div><div class="hint">Use el botón <b>POWER</b>.</div>`);
+      btnAnalyze.disabled = true; btnShock.disabled = true; btnCPR.disabled = true; btnNobody.disabled = true;
+      updateIndicators();
+      drawWaveReset();
+      log('POWER OFF');
+    }
+  }
+
+  function tryEnableAnalyze(){
+    if(sim.state===State.PADS && sim.padsPlaced.S && sim.padsPlaced.A){
+      btnAnalyze.disabled = false;
+      setLCD(`<div class="big">Parches OK</div><div>Presione <b>ANALIZAR</b>. Recuerde seguridad.</div>`);
+      speak('Parches colocados. No toque al paciente. Presione analizar.');
+    }
+  }
+
+  function startAnalyze(){
+    if(sim.state!==State.PADS && sim.state!==State.REANALYZE) return;
+    sim.safeConfirmed = false; updateIndicators();
+    btnAnalyze.disabled = true; btnNobody.disabled = false; btnShock.disabled = true; btnCPR.disabled = true;
+    setState(State.ANALYZING);
+    setLCD(`<div class="big danger">No toque al paciente</div><div>Confirme con <b>¡NADIE TOQUE!</b> y el DEA analizará el ritmo...</div>`);
+    speak('No toque al paciente. Confirme nadie toque para iniciar el análisis.');
+    log('READY ANALYZE');
+  }
+
+  function confirmSafety(){
+    if(sim.state!==State.ANALYZING) return;
+    sim.safeConfirmed = true; updateIndicators();
+    btnNobody.disabled = true;
+    setLCD(`<div class="big">Analizando ritmo...</div><div class="hint">Espere 8 segundos.</div>`);
+    speak('Analizando ritmo');
+    log('ANALYZING START');
+    // Temporizador de análisis
+    clearTimeout(sim.timers.analyze);
+    sim.timers.analyze = setTimeout(()=>{
+      // Decisión binaria por ritmo
+      if(sim.rhythm===Rhythm.VF_COARSE){
+        // desfibrilable
+        setState(State.CHARGING);
+        sim.energy = 200;
+        updateIndicators();
+        setLCD(`<div>Descarga indicada. <span class="energy">${sim.energy} J</span></div><div class="big">Cargando...</div><div class="hint">3 s aprox.</div>`);
+        speak('Descarga indicada. Cargando.');
+        log('SHOCK INDICATED', {energy:sim.energy});
+        // cargar
+        clearTimeout(sim.timers.charge);
+        sim.timers.charge = setTimeout(()=>{
+          setState(State.SHOCK_READY);
+          btnShock.disabled = false;
+          setLCD(`<div class="big danger">Manténgase alejado</div><div>Presione <b>SHOCK</b> ahora.</div>`);
+          speak('Manténgase alejado. Presione el botón de descarga ahora.');
+          log('CHARGED READY');
+        }, 3000);
+      } else if(sim.rhythm===Rhythm.PEA || sim.rhythm===Rhythm.FLAT){
+        // No desfibrilable
+        setLCD(`<div class="big">No se recomienda descarga</div><div>Inicie RCP durante 2 minutos.</div>`);
+        setState(State.CPR);
+        btnCPR.disabled = false;
+        speak('No se recomienda descarga. Inicie R C P durante dos minutos.');
+        log('NO SHOCK ADVISED');
+      } else {
+        // default
+        setState(State.CPR);
+        btnCPR.disabled = false;
+      }
+    }, 8000);
+  }
+
+  function deliverShock(){
+    if(sim.state!==State.SHOCK_READY) return;
+    // seguridad: si no presionó "nadie toque" justo antes, penaliza (en esta MVP pedimos solo antes de analizar)
+    log('SHOCK DELIVERED', {energy:sim.energy});
+    btnShock.disabled = true;
+    flashLCD('#fecaca');
+    sim.score += 20; updateIndicators();
+    // efecto post-shock: ir a RCP
+    setState(State.CPR);
+    btnCPR.disabled = false;
+    setLCD(`<div>Descarga aplicada: <span class="energy">${sim.energy} J</span></div><div class="big">Inicie RCP 2:00</div>`);
+    speak(`Descarga aplicada. Inicie R C P dos minutos.`);
+    // Update ritmo gráfico: inmediatamente tras descarga, breve caos y luego VF puede disminuir → manejamos en reanálisis
+    postShockVisualGlitch();
+  }
+
+  function startCPR(){
+    if(sim.state!==State.CPR) return;
+    btnCPR.disabled = true;
+    log('CPR START');
+    // Temporizador 2:00 con metrónomo ~110 bpm
+    let total = 120; // segundos
+    let remain = total;
+    updateCprClock(remain);
+    cprFill.style.width='0%';
+
+    // Metronomo
+    startMetronome(110);
+
+    clearInterval(sim.timers.cpr);
+    sim.timers.cpr = setInterval(()=>{
+      remain--;
+      if(remain<0){
+        clearInterval(sim.timers.cpr);
+        stopMetronome();
+        // Re-analizar
+        sim.cycle++;
+        indCycles.textContent = `Ciclo: ${sim.cycle}`;
+        setState(State.REANALYZE);
+        btnAnalyze.disabled = false;
+        sim.safeConfirmed = false; updateIndicators();
+        setLCD(`<div class="big">Re-análisis</div><div>Presione <b>ANALIZAR</b>. Recuerde seguridad.</div>`);
+        speak('Detenga compresiones. Presione analizar.');
+        log('CPR END');
+        // probabilidad de conversión a sinusal si ya hubo shock
+        if(sim.cycle>=1 && Math.random()<0.6){
+          sim.rhythm = Rhythm.SINUS;
+        }else{
+          // si no convierte, mantenemos VF y escalamos energía para próximo shock
+          if(sim.rhythm===Rhythm.VF_COARSE) sim.energy = Math.min(300, (sim.energy||200)+50);
+        }
+        updateIndicators();
+        return;
+      }
+      updateCprClock(remain);
+      const pct = Math.round(((total-remain)/total)*100);
+      cprFill.style.width = pct+'%';
+      // puntaje simple: +1 por cada 2 s mantenidos (representa fracción RCP)
+      if(remain%2===0) sim.score++;
+      indScore.textContent = `Score: ${sim.score}`;
+    }, 1000);
+  }
+
+  function updateCprClock(sec){
+    const m = String(Math.floor(sec/60)).padStart(2,'0');
+    const s = String(sec%60).padStart(2,'0');
+    cprClock.textContent = `${m}:${s}`;
+  }
+
+  // ---- Metronomo (~110 bpm) usando WebAudio
+  let audioCtx=null, metroOsc=null, metroGain=null;
+  function startMetronome(bpm){
+    tempoEl.textContent = bpm;
+    const interval = 60000/bpm; // ms
+    if(!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+    stopMetronome();
+    sim.timers.metro = setInterval(()=>{
+      // beep corto
+      metroOsc = audioCtx.createOscillator();
+      metroGain = audioCtx.createGain();
+      metroOsc.frequency.value = 900;
+      metroGain.gain.setValueAtTime(0.0001, audioCtx.currentTime);
+      metroGain.gain.exponentialRampToValueAtTime(0.3, audioCtx.currentTime+0.005);
+      metroGain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime+0.09);
+      metroOsc.connect(metroGain).connect(audioCtx.destination);
+      metroOsc.start();
+      metroOsc.stop(audioCtx.currentTime+0.1);
+    }, interval);
+  }
+  function stopMetronome(){
+    clearInterval(sim.timers.metro);
+    try{ metroOsc?.stop(); }catch{}
+    metroOsc=null; metroGain=null;
+  }
+
+  // ---- Onda simulada en canvas
+  const wave = $('#wave');
+  const wctx = wave.getContext('2d');
+  function resizeCanvas(){
+    wave.width = wave.clientWidth * devicePixelRatio;
+    wave.height= wave.clientHeight* devicePixelRatio;
+  }
+  window.addEventListener('resize', resizeCanvas); resizeCanvas();
+
+  function drawWaveReset(){ wctx.clearRect(0,0,wave.width,wave.height); cancelAnimationFrame(sim.timers.draw); }
+  function postShockVisualGlitch(){
+    const t0 = performance.now();
+    (function loop(t){
+      const dt=t-t0;
+      wctx.clearRect(0,0,wave.width,wave.height);
+      for(let i=0;i<40;i++){
+        const x=Math.random()*wave.width, y=Math.random()*wave.height;
+        wctx.fillStyle='rgba(255,255,255,0.07)'; wctx.fillRect(x,y,2,2);
+      }
+      if(dt<400) requestAnimationFrame(loop);
+    })(t0);
+  }
+
+  function drawWave(){
+    const W = wave.width, H = wave.height, mid=H*0.5;
+    wctx.clearRect(0,0,W,H);
+    wctx.strokeStyle='rgba(226,232,240,0.9)';
+    wctx.lineWidth=2; wctx.beginPath();
+    const t = performance.now()/1000;
+
+    if(sim.rhythm===Rhythm.VF_COARSE){
+      // Ruido caótico pseudo-VF
+      for(let x=0; x<W; x+=4){
+        const f = 6 + Math.sin(t*1.2)*2;
+        const amp = H*0.32;
+        const y = mid + (Math.sin((x*0.02)+t*f)+Math.sin((x*0.037)+t*f*1.3))*amp*0.35 + (Math.random()-0.5)*16;
+        if(x===0) wctx.moveTo(x,y); else wctx.lineTo(x,y);
+      }
+    } else if(sim.rhythm===Rhythm.SINUS){
+      // Sinusal simple: P-QRS-T
+      const period = 1000; // ms / ~60 bpm visual, solo ornamental
+      for(let x=0;x<W;x++){
+        const phase = ((x + t*120)%period)/period;
+        let y = mid + Math.sin(phase*2*Math.PI)*H*0.07; // base
+        // QRS picudo breve
+        if(phase>0.48 && phase<0.50) y = mid - H*0.35;
+        if(phase>=0.50 && phase<0.52) y = mid + H*0.25;
+        if(x===0) wctx.moveTo(x,y); else wctx.lineTo(x,y);
+      }
+    } else if(sim.rhythm===Rhythm.FLAT){
+      wctx.moveTo(0,mid); wctx.lineTo(W,mid);
+    } else {
+      // genérico
+      for(let x=0;x<W;x++){
+        const y = mid + Math.sin((x*0.03)+t*6)*H*0.15;
+        if(x===0) wctx.moveTo(x,y); else wctx.lineTo(x,y);
+      }
+    }
+    wctx.stroke();
+    sim.timers.draw = requestAnimationFrame(drawWave);
+  }
+  drawWave();
+
+  // ---- Drag & snap de parches (pointer events)
+  function makeDraggable(el, kind){
+    let dragging=false, sx=0, sy=0, ox=0, oy=0;
+
+    const onDown = (e)=>{
+      dragging=true; el.setPointerCapture(e.pointerId);
+      const rect = el.getBoundingClientRect();
+      sx = e.clientX; sy = e.clientY; ox = rect.left; oy = rect.top;
+    };
+    const onMove = (e)=>{
+      if(!dragging) return;
+      const dx = e.clientX - sx, dy = e.clientY - sy;
+      const host = torso.getBoundingClientRect();
+      let nx = ox+dx - host.left, ny = oy+dy - host.top;
+      // límites suaves
+      nx = Math.max(0, Math.min(nx, host.width-el.offsetWidth));
+      ny = Math.max(0, Math.min(ny, host.height-el.offsetHeight));
+      el.style.left = nx + 'px';
+      el.style.top  = ny + 'px';
+    };
+    const onUp = ()=>{
+      dragging=false;
+      // snap si cae dentro de la zona correcta
+      const zone = (kind==='S'? zoneS: zoneA).getBoundingClientRect();
+      const host = torso.getBoundingClientRect();
+      const elRect = el.getBoundingClientRect();
+      const cx = elRect.left + elRect.width/2, cy = elRect.top + elRect.height/2;
+      const inside = cx>zone.left && cx<zone.right && cy>zone.top && cy<zone.bottom;
+      if(inside){
+        el.style.left = (zone.left - host.left + (zone.width-el.offsetWidth)/2) + 'px';
+        el.style.top  = (zone.top  - host.top  + (zone.height-el.offsetHeight)/2) + 'px';
+        el.classList.add('placed');
+        if(kind==='S') sim.padsPlaced.S=true; else sim.padsPlaced.A=true;
+        log('PAD PLACED', {kind});
+        sim.score += 10; updateIndicators();
+        tryEnableAnalyze();
+      } else {
+        // si se suelta en lugar incorrecto, marcar zona roja un instante
+        (kind==='S'? zoneS: zoneA).classList.add('bad');
+        setTimeout(()=> (kind==='S'? zoneS: zoneA).classList.remove('bad'), 600);
+      }
+    };
+
+    el.addEventListener('pointerdown', onDown);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  }
+  makeDraggable(padS,'S');
+  makeDraggable(padA,'A');
+
+  // ---- Utilidades
+  function stopAllTimers(){
+    ['analyze','charge','cpr','metro','draw'].forEach(k=>{
+      const h = sim.timers[k];
+      if(k==='draw') cancelAnimationFrame(h); else clearInterval(h); clearTimeout(h);
+    });
+    stopMetronome();
+  }
+  function flashLCD(color){
+    const lcd = $('#lcd');
+    const prev = lcd.style.boxShadow;
+    lcd.style.boxShadow = `0 0 0 9999px ${color}20 inset, 0 0 24px ${color}`;
+    setTimeout(()=> lcd.style.boxShadow = prev, 280);
+  }
+
+  // ---- Botones
+  btnPower.addEventListener('click', powerToggle);
+  btnAnalyze.addEventListener('click', startAnalyze);
+  btnNobody.addEventListener('click', confirmSafety);
+  btnShock.addEventListener('click', deliverShock);
+  btnCPR.addEventListener('click', startCPR);
+
+  btnTTS.addEventListener('click', ()=>{
+    sim.tts = !sim.tts;
+    ttsFlag.textContent = sim.tts? 'ON' : 'OFF';
+    log('TTS '+(sim.tts?'ON':'OFF'));
+    if(sim.tts) speak('Audio guía activado.');
+  });
+
+  // ---- Inicial
+  setState(State.OFF);
+  updateIndicators();
+  sim.rhythm = Rhythm.VF_COARSE; // Caso por defecto
+  drawWave();
+
+  // ---- Guardado del log al cerrar (para futura analítica)
+  window.addEventListener('beforeunload', ()=>{
+    stopAllTimers();
+  });
+})();
+</script>
+</body>
+</html>
