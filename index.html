@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Simulador DEA - MVP</title>
+<title>Simulador DEA - MVP + Selector de Voz</title>
 <style>
   :root{
     --bg:#0b0f14; --panel:#111722; --accent:#2dd4bf; --accent2:#60a5fa; --warn:#ef4444; --ok:#22c55e; --muted:#94a3b8; --text:#e5e7eb;
   }
   *{box-sizing:border-box}
   body{margin:0;background:linear-gradient(180deg,#0b0f14,#0a0d12);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial}
-  .app{display:grid;grid-template-columns:340px 1fr;gap:16px;min-height:100dvh;padding:16px}
+  .app{display:grid;grid-template-columns:360px 1fr;gap:16px;min-height:100dvh;padding:16px}
   .panel{background:var(--panel);border:1px solid #1e293b;border-radius:12px;padding:12px}
   .title{font-weight:700;font-size:18px;margin-bottom:8px}
   .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
@@ -58,6 +58,7 @@
   .metronome{font-variant-numeric:tabular-nums;font-weight:800}
   .pill{padding:4px 6px;border:1px solid #263246;border-radius:6px;background:#0b1220;color:#cbd5e1}
   .hr{height:1px;background:#1e293b;margin:8px 0}
+  select.pill, input.pill{appearance:none}
   @media(max-width:980px){.app{grid-template-columns:1fr}}
 </style>
 </head>
@@ -86,7 +87,24 @@
       <button class="btn warn" id="btnNobody" disabled>¡NADIE TOQUE!</button>
       <button class="btn accent" id="btnShock" disabled>SHOCK</button>
       <button class="btn ok" id="btnCPR" disabled>INICIAR RCP 2:00</button>
+    </div>
+
+    <div class="hr"></div>
+
+    <!-- Selector de voz TTS -->
+    <div class="badge">Audio guía (TTS)</div>
+    <div class="row" style="margin-top:6px">
       <button class="btn" id="btnTTS">Audio TTS</button>
+      <select id="voiceSel" class="pill" style="min-width:200px"></select>
+      <button class="btn" id="btnTestVoice">Probar voz</button>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <label class="hint">Velocidad</label>
+      <input type="range" id="rateCtrl" min="0.7" max="1.4" step="0.05" value="1" class="pill" style="width:160px">
+      <span class="pill" id="rateVal">1.00x</span>
+      <label class="hint">Tono</label>
+      <input type="range" id="pitchCtrl" min="0.7" max="1.3" step="0.05" value="1" class="pill" style="width:160px">
+      <span class="pill" id="pitchVal">1.00</span>
     </div>
 
     <div class="hr"></div>
@@ -163,6 +181,7 @@
 <script>
 /* =========================
    SIMULADOR DEA – LÓGICA MVP
+   + Selector de voz TTS
    ========================= */
 (() => {
   // ---- Helpers DOM
@@ -179,6 +198,13 @@
   const btnCPR = $('#btnCPR');
   const btnTTS = $('#btnTTS');
   const ttsFlag = $('#ttsFlag');
+  const voiceSel = $('#voiceSel');
+  const btnTestVoice = $('#btnTestVoice');
+  const rateCtrl = $('#rateCtrl');
+  const pitchCtrl = $('#pitchCtrl');
+  const rateVal = $('#rateVal');
+  const pitchVal = $('#pitchVal');
+
   const indPads = $('#indPads');
   const indSafe = $('#indSafe');
   const indCycles = $('#indCycles');
@@ -210,7 +236,10 @@
     t0: performance.now(),
     tts: false,
     logs: [],
-    timers: {analyze:null, charge:null, cpr:null, metro:null, draw:null}
+    timers: {analyze:null, charge:null, cpr:null, metro:null, draw:null},
+    ttsVoiceName: localStorage.getItem('dea_voiceName') || '',
+    ttsRate: +(localStorage.getItem('dea_voiceRate') || 1),
+    ttsPitch: +(localStorage.getItem('dea_voicePitch') || 1)
   };
 
   // ---- LOG
@@ -223,19 +252,59 @@
     logBox.prepend(line);
   }
 
-  // ---- TTS (opcional)
+  // ---- TTS
+  function getVoicesSafe(){ try{ return speechSynthesis.getVoices() || []; }catch{ return []; } }
+  function voicesByLangFirst(voices, langPrefix='es'){
+    const prefer = voices.filter(v => v.lang?.toLowerCase().startsWith(langPrefix));
+    const others = voices.filter(v => !v.lang?.toLowerCase().startsWith(langPrefix));
+    const sortFn = (a,b) => (a.lang||'').localeCompare(b.lang||'') || (a.name||'').localeCompare(b.name||'');
+    return [...prefer.sort(sortFn), ...others.sort(sortFn)];
+  }
+  function populateVoiceList(){
+    const voices = voicesByLangFirst(getVoicesSafe());
+    voiceSel.innerHTML = '';
+    voices.forEach(v=>{
+      const opt = document.createElement('option');
+      opt.value = v.name;
+      opt.textContent = `${v.name} — ${v.lang}${v.default ? ' (default)' : ''}`;
+      voiceSel.appendChild(opt);
+    });
+    // Selección persistente o heurística
+    let target = sim.ttsVoiceName;
+    if(!target){
+      // heurística: Google/Monica/Sabina/Siri en español
+      const prefer = voices.find(v => v.lang?.startsWith('es') && /Google|Monica|Sabi|Siri|Paulina|Jorge|Sof/i.test(v.name));
+      target = prefer?.name || (voices.find(v=>v.lang?.startsWith('es'))?.name || voices[0]?.name || '');
+    }
+    if(target){
+      voiceSel.value = target;
+      sim.ttsVoiceName = target;
+    }
+  }
+  // Disparadores de carga de voces (algunos navegadores tardan)
+  if('speechSynthesis' in window){
+    speechSynthesis.onvoiceschanged = populateVoiceList;
+    // fallback por si onvoiceschanged no dispara
+    setTimeout(populateVoiceList, 400);
+    setTimeout(populateVoiceList, 1200);
+  }
+
   function speak(text){
     if(!sim.tts || !('speechSynthesis' in window)) return;
     const u = new SpeechSynthesisUtterance(text);
-    u.lang='es-AR'; u.rate=1; u.pitch=1;
+    const voices = getVoicesSafe();
+    const chosen = voices.find(v => v.name === sim.ttsVoiceName) ||
+                   voices.find(v => v.lang?.startsWith('es')) || null;
+    if(chosen){ u.voice = chosen; u.lang = chosen.lang; }
+    else { u.lang = 'es-AR'; }
+    u.rate = sim.ttsRate;
+    u.pitch = sim.ttsPitch;
     speechSynthesis.cancel(); // evitar colas
     speechSynthesis.speak(u);
   }
 
   // ---- UI helpers
-  function setLCD(html){
-    lcdMsg.innerHTML = html;
-  }
+  function setLCD(html){ lcdMsg.innerHTML = html; }
   function setState(s){
     sim.state = s;
     stateLabel.textContent = ({
@@ -250,7 +319,6 @@
     indScore.textContent = `Score: ${sim.score}`;
     energyLabel.textContent = sim.energy? `${sim.energy} J` : '—';
     rhythmLabel.textContent = sim.rhythm;
-    // Zonas estilo
     [zoneS,zoneA].forEach(z=>z.classList.remove('good','bad'));
     if(sim.state===State.PADS){
       zoneS.classList.toggle('good',sim.padsPlaced.S);
@@ -258,7 +326,7 @@
     }
   }
 
-  // ---- Máquina de estados (flujo MVP: FV→Shock→RCP→reanalizar→posible RCE)
+  // ---- Máquina de estados
   function powerToggle(){
     if(sim.state===State.OFF){
       setState(State.ON);
@@ -269,9 +337,12 @@
       updateIndicators();
       log('POWER ON');
     } else {
-      // reset total
       stopAllTimers();
-      sim = {...sim, state:State.OFF, rhythm:Rhythm.VF_COARSE, cycle:0, energy:0, safeConfirmed:false, padsPlaced:{S:false,A:false}, score:0};
+      sim = {
+        ...sim,
+        state:State.OFF, rhythm:Rhythm.VF_COARSE, cycle:0, energy:0,
+        safeConfirmed:false, padsPlaced:{S:false,A:false}, score:0
+      };
       // reset UI
       padS.style.left='30px'; padS.style.top='30px'; padS.classList.remove('placed');
       padA.style.left='160px'; padA.style.top='30px'; padA.classList.remove('placed');
@@ -308,19 +379,15 @@
     setLCD(`<div class="big">Analizando ritmo...</div><div class="hint">Espere 8 segundos.</div>`);
     speak('Analizando ritmo');
     log('ANALYZING START');
-    // Temporizador de análisis
     clearTimeout(sim.timers.analyze);
     sim.timers.analyze = setTimeout(()=>{
-      // Decisión binaria por ritmo
       if(sim.rhythm===Rhythm.VF_COARSE){
-        // desfibrilable
         setState(State.CHARGING);
         sim.energy = 200;
         updateIndicators();
         setLCD(`<div>Descarga indicada. <span class="energy">${sim.energy} J</span></div><div class="big">Cargando...</div><div class="hint">3 s aprox.</div>`);
         speak('Descarga indicada. Cargando.');
         log('SHOCK INDICATED', {energy:sim.energy});
-        // cargar
         clearTimeout(sim.timers.charge);
         sim.timers.charge = setTimeout(()=>{
           setState(State.SHOCK_READY);
@@ -330,14 +397,12 @@
           log('CHARGED READY');
         }, 3000);
       } else if(sim.rhythm===Rhythm.PEA || sim.rhythm===Rhythm.FLAT){
-        // No desfibrilable
         setLCD(`<div class="big">No se recomienda descarga</div><div>Inicie RCP durante 2 minutos.</div>`);
         setState(State.CPR);
         btnCPR.disabled = false;
         speak('No se recomienda descarga. Inicie R C P durante dos minutos.');
         log('NO SHOCK ADVISED');
       } else {
-        // default
         setState(State.CPR);
         btnCPR.disabled = false;
       }
@@ -346,17 +411,14 @@
 
   function deliverShock(){
     if(sim.state!==State.SHOCK_READY) return;
-    // seguridad: si no presionó "nadie toque" justo antes, penaliza (en esta MVP pedimos solo antes de analizar)
     log('SHOCK DELIVERED', {energy:sim.energy});
     btnShock.disabled = true;
     flashLCD('#fecaca');
     sim.score += 20; updateIndicators();
-    // efecto post-shock: ir a RCP
     setState(State.CPR);
     btnCPR.disabled = false;
     setLCD(`<div>Descarga aplicada: <span class="energy">${sim.energy} J</span></div><div class="big">Inicie RCP 2:00</div>`);
     speak(`Descarga aplicada. Inicie R C P dos minutos.`);
-    // Update ritmo gráfico: inmediatamente tras descarga, breve caos y luego VF puede disminuir → manejamos en reanálisis
     postShockVisualGlitch();
   }
 
@@ -364,22 +426,17 @@
     if(sim.state!==State.CPR) return;
     btnCPR.disabled = true;
     log('CPR START');
-    // Temporizador 2:00 con metrónomo ~110 bpm
     let total = 120; // segundos
     let remain = total;
     updateCprClock(remain);
     cprFill.style.width='0%';
-
-    // Metronomo
     startMetronome(110);
-
     clearInterval(sim.timers.cpr);
     sim.timers.cpr = setInterval(()=>{
       remain--;
       if(remain<0){
         clearInterval(sim.timers.cpr);
         stopMetronome();
-        // Re-analizar
         sim.cycle++;
         indCycles.textContent = `Ciclo: ${sim.cycle}`;
         setState(State.REANALYZE);
@@ -388,11 +445,9 @@
         setLCD(`<div class="big">Re-análisis</div><div>Presione <b>ANALIZAR</b>. Recuerde seguridad.</div>`);
         speak('Detenga compresiones. Presione analizar.');
         log('CPR END');
-        // probabilidad de conversión a sinusal si ya hubo shock
         if(sim.cycle>=1 && Math.random()<0.6){
           sim.rhythm = Rhythm.SINUS;
         }else{
-          // si no convierte, mantenemos VF y escalamos energía para próximo shock
           if(sim.rhythm===Rhythm.VF_COARSE) sim.energy = Math.min(300, (sim.energy||200)+50);
         }
         updateIndicators();
@@ -401,7 +456,6 @@
       updateCprClock(remain);
       const pct = Math.round(((total-remain)/total)*100);
       cprFill.style.width = pct+'%';
-      // puntaje simple: +1 por cada 2 s mantenidos (representa fracción RCP)
       if(remain%2===0) sim.score++;
       indScore.textContent = `Score: ${sim.score}`;
     }, 1000);
@@ -421,7 +475,6 @@
     if(!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
     stopMetronome();
     sim.timers.metro = setInterval(()=>{
-      // beep corto
       metroOsc = audioCtx.createOscillator();
       metroGain = audioCtx.createGain();
       metroOsc.frequency.value = 900;
@@ -470,7 +523,6 @@
     const t = performance.now()/1000;
 
     if(sim.rhythm===Rhythm.VF_COARSE){
-      // Ruido caótico pseudo-VF
       for(let x=0; x<W; x+=4){
         const f = 6 + Math.sin(t*1.2)*2;
         const amp = H*0.32;
@@ -478,12 +530,10 @@
         if(x===0) wctx.moveTo(x,y); else wctx.lineTo(x,y);
       }
     } else if(sim.rhythm===Rhythm.SINUS){
-      // Sinusal simple: P-QRS-T
-      const period = 1000; // ms / ~60 bpm visual, solo ornamental
+      const period = 1000;
       for(let x=0;x<W;x++){
         const phase = ((x + t*120)%period)/period;
-        let y = mid + Math.sin(phase*2*Math.PI)*H*0.07; // base
-        // QRS picudo breve
+        let y = mid + Math.sin(phase*2*Math.PI)*H*0.07;
         if(phase>0.48 && phase<0.50) y = mid - H*0.35;
         if(phase>=0.50 && phase<0.52) y = mid + H*0.25;
         if(x===0) wctx.moveTo(x,y); else wctx.lineTo(x,y);
@@ -491,7 +541,6 @@
     } else if(sim.rhythm===Rhythm.FLAT){
       wctx.moveTo(0,mid); wctx.lineTo(W,mid);
     } else {
-      // genérico
       for(let x=0;x<W;x++){
         const y = mid + Math.sin((x*0.03)+t*6)*H*0.15;
         if(x===0) wctx.moveTo(x,y); else wctx.lineTo(x,y);
@@ -502,7 +551,7 @@
   }
   drawWave();
 
-  // ---- Drag & snap de parches (pointer events)
+  // ---- Drag & snap de parches
   function makeDraggable(el, kind){
     let dragging=false, sx=0, sy=0, ox=0, oy=0;
 
@@ -516,7 +565,6 @@
       const dx = e.clientX - sx, dy = e.clientY - sy;
       const host = torso.getBoundingClientRect();
       let nx = ox+dx - host.left, ny = oy+dy - host.top;
-      // límites suaves
       nx = Math.max(0, Math.min(nx, host.width-el.offsetWidth));
       ny = Math.max(0, Math.min(ny, host.height-el.offsetHeight));
       el.style.left = nx + 'px';
@@ -524,7 +572,6 @@
     };
     const onUp = ()=>{
       dragging=false;
-      // snap si cae dentro de la zona correcta
       const zone = (kind==='S'? zoneS: zoneA).getBoundingClientRect();
       const host = torso.getBoundingClientRect();
       const elRect = el.getBoundingClientRect();
@@ -539,7 +586,6 @@
         sim.score += 10; updateIndicators();
         tryEnableAnalyze();
       } else {
-        // si se suelta en lugar incorrecto, marcar zona roja un instante
         (kind==='S'? zoneS: zoneA).classList.add('bad');
         setTimeout(()=> (kind==='S'? zoneS: zoneA).classList.remove('bad'), 600);
       }
@@ -567,13 +613,14 @@
     setTimeout(()=> lcd.style.boxShadow = prev, 280);
   }
 
-  // ---- Botones
+  // ---- Botones DEA
   btnPower.addEventListener('click', powerToggle);
   btnAnalyze.addEventListener('click', startAnalyze);
   btnNobody.addEventListener('click', confirmSafety);
   btnShock.addEventListener('click', deliverShock);
   btnCPR.addEventListener('click', startCPR);
 
+  // ---- Controles TTS
   btnTTS.addEventListener('click', ()=>{
     sim.tts = !sim.tts;
     ttsFlag.textContent = sim.tts? 'ON' : 'OFF';
@@ -581,13 +628,41 @@
     if(sim.tts) speak('Audio guía activado.');
   });
 
+  voiceSel.addEventListener('change', ()=>{
+    sim.ttsVoiceName = voiceSel.value || '';
+    localStorage.setItem('dea_voiceName', sim.ttsVoiceName);
+    log('VOICE SELECT', {name: sim.ttsVoiceName});
+  });
+
+  btnTestVoice.addEventListener('click', ()=>{
+    const name = sim.ttsVoiceName || '(predeterminada)';
+    speak(`Voz seleccionada: ${name}. Esta es una prueba de audio.`);
+  });
+
+  rateCtrl.addEventListener('input', ()=>{
+    sim.ttsRate = +rateCtrl.value;
+    rateVal.textContent = sim.ttsRate.toFixed(2)+'x';
+    localStorage.setItem('dea_voiceRate', sim.ttsRate);
+  });
+  pitchCtrl.addEventListener('input', ()=>{
+    sim.ttsPitch = +pitchCtrl.value;
+    pitchVal.textContent = sim.ttsPitch.toFixed(2);
+    localStorage.setItem('dea_voicePitch', sim.ttsPitch);
+  });
+
+  // Inicializa valores de sliders desde storage
+  rateCtrl.value = sim.ttsRate;
+  rateVal.textContent = sim.ttsRate.toFixed(2)+'x';
+  pitchCtrl.value = sim.ttsPitch;
+  pitchVal.textContent = sim.ttsPitch.toFixed(2);
+
   // ---- Inicial
   setState(State.OFF);
   updateIndicators();
-  sim.rhythm = Rhythm.VF_COARSE; // Caso por defecto
+  sim.rhythm = Rhythm.VF_COARSE;
   drawWave();
 
-  // ---- Guardado del log al cerrar (para futura analítica)
+  // ---- Guardado del log al cerrar
   window.addEventListener('beforeunload', ()=>{
     stopAllTimers();
   });
